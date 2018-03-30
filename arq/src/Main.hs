@@ -38,7 +38,7 @@ instance Monoid ARQSimLog where
     }
 
 data SeqNum = Zero | One
-newtype Event a = Event (ARQSimState -> (a, ARQSimState))
+-- newtype Event a = Event (ARQSimState -> (a, ARQSimState))
 
 data ARQTransmitterState = ARQTransmitterState {
   currentPacketSeqNum     :: SeqNum,
@@ -58,12 +58,12 @@ data ARQSimState = ARQSimState {
 
 defaultTransmitterState = ARQTransmitterState {
   currentPacketSeqNum = Zero,
-  packetTimeoutEvent = Event (\s -> ((), s))
+  packetTimeoutEvent = return ()
 }
 
 defaultReceiverState = ARQReceiverState {
   currentAckSeqNum = One,
-  ackTimeoutEvent = Event (\s -> ((), s))
+  ackTimeoutEvent = return ()
 }
 
 defaultState = ARQSimState {
@@ -72,7 +72,7 @@ defaultState = ARQSimState {
   receiverState = defaultReceiverState
 }
 
-type ARQSim a = RWST ARQSimConfig ARQSimLog ARQSimState IO a
+type Event a = RWST ARQSimConfig ARQSimLog ARQSimState IO a
 
 main :: IO ()
 main = do
