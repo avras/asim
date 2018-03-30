@@ -1,6 +1,7 @@
 module Main where
 
 import Control.Monad.RWS
+import Data.PQueue.Prio.Min
 
 type Time = Double
 type Probability = Double
@@ -16,63 +17,95 @@ data ARQSimConfig = ARQSimConfig {
 
 data ARQSimLog = ARQSimLog {
   numPacketsTransmitted   :: Int,
-  numPacketTimeouts       :: Int,
+  numACKTimeouts          :: Int,
   numACKsTransmitted      :: Int,
   numDupPacketsReceived   :: Int
-}
-
-logEmpty = ARQSimLog {
-  numPacketsTransmitted = 0,
-  numPacketTimeouts = 0,
-  numACKsTransmitted = 0,
-  numDupPacketsReceived = 0
-}
+} deriving (Show)
 
 instance Monoid ARQSimLog where
   mempty = logEmpty
   log1 `mappend` log2 = ARQSimLog {
       numPacketsTransmitted = numPacketsTransmitted log1 + numPacketsTransmitted log2,
-      numPacketTimeouts = numPacketTimeouts log1 + numPacketTimeouts log2,
+      numACKTimeouts = numACKTimeouts log1 + numACKTimeouts log2,
       numACKsTransmitted = numACKsTransmitted log1 + numACKsTransmitted log2,
       numDupPacketsReceived = numDupPacketsReceived log1 + numDupPacketsReceived log2
     }
 
+logEmpty = ARQSimLog {
+  numPacketsTransmitted = 0,
+  numACKTimeouts = 0,
+  numACKsTransmitted = 0,
+  numDupPacketsReceived = 0
+}
+
+onePacketTransmitted = logEmpty { numPacketsTransmitted = 1 }
+onePacketTimeout = logEmpty { numACKTimeouts = 1 }
+oneACKTransmitted = logEmpty { numACKsTransmitted = 1 }
+oneDupPacketReceived = logEmpty { numDupPacketsReceived = 1 }
+
 data SeqNum = Zero | One
--- newtype Event a = Event (ARQSimState -> (a, ARQSimState))
 
 data ARQTransmitterState = ARQTransmitterState {
   currentPacketSeqNum     :: SeqNum,
-  packetTimeoutEvent      :: Event () 
+  packetTimeoutEvent      :: Event
 }
 
 data ARQReceiverState = ARQReceiverState {
   currentAckSeqNum        :: SeqNum,
-  ackTimeoutEvent         :: Event () 
+  ackTimeoutEvent         :: Event
 }
 
 data ARQSimState = ARQSimState {
   currentSimulationTime   :: Time,
   transmitterState        :: ARQTransmitterState,
-  receiverState           :: ARQReceiverState
+  receiverState           :: ARQReceiverState,
+  eventQueue              :: MinPQueue Time Event
 }
 
-defaultTransmitterState = ARQTransmitterState {
+initialTransmitterState = ARQTransmitterState {
   currentPacketSeqNum = Zero,
   packetTimeoutEvent = return ()
 }
 
-defaultReceiverState = ARQReceiverState {
+initialReceiverState = ARQReceiverState {
   currentAckSeqNum = One,
   ackTimeoutEvent = return ()
 }
 
-defaultState = ARQSimState {
+initialState = ARQSimState {
   currentSimulationTime = 0.0,
-  transmitterState = defaultTransmitterState,
-  receiverState = defaultReceiverState
+  transmitterState = initialTransmitterState,
+  receiverState = initialReceiverState,
+  eventQueue = empty
 }
 
-type Event a = RWST ARQSimConfig ARQSimLog ARQSimState IO a
+type Event = RWST ARQSimConfig ARQSimLog ARQSimState IO ()
+
+transmitPacket :: Event
+transmitPacket = do
+  tell onePacketTransmitted
+  t <- gets currentSimulationTime
+  liftIO . putStrLn $ "t = " ++ (show t) ++ " seconds: Packet transmitted"
+
+ackTimeout :: Event
+ackTimeout = do
+  tell onePacketTimeout
+  t <- gets currentSimulationTime
+  liftIO . putStrLn $ "t = " ++ (show t) ++ " seconds: ACK timeout occurred"
+  transmitPacket
+
+transmitACK :: Event
+transmitACK = do
+  tell oneACKTransmitted
+  t <- gets currentSimulationTime
+  liftIO . putStrLn $ "t = " ++ (show t) ++ " seconds: ACK transmitted"
+
+arqSim :: Event
+arqSim = do
+  transmitPacket
+  transmitPacket
+  ackTimeout
+  transmitACK
 
 main :: IO ()
 main = do
@@ -84,5 +117,6 @@ main = do
     forwardPropDelay = 1.0,
     reversePropDelay = 1.0
   }
-               
-  putStrLn "hello world"
+
+  (s, log) <- execRWST arqSim config initialState
+  putStrLn $ show log
