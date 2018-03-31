@@ -1,7 +1,7 @@
 module Main where
 
 import Control.Monad.RWS
-import Data.PQueue.Prio.Min
+import qualified Data.PQueue.Prio.Min as PQ
 
 type Time = Double
 type Probability = Double
@@ -51,32 +51,32 @@ data ARQTransmitterState = ARQTransmitterState {
 }
 
 data ARQReceiverState = ARQReceiverState {
-  currentAckSeqNum        :: SeqNum,
-  ackTimeoutEvent         :: Event
+  currentAckSeqNum        :: SeqNum
 }
+
+type EventQueue = PQ.MinPQueue Time Event
 
 data ARQSimState = ARQSimState {
   currentSimulationTime   :: Time,
   transmitterState        :: ARQTransmitterState,
   receiverState           :: ARQReceiverState,
-  eventQueue              :: MinPQueue Time Event
+  eventQueue              :: EventQueue
 }
 
 initialTransmitterState = ARQTransmitterState {
   currentPacketSeqNum = Zero,
-  packetTimeoutEvent = return ()
+  packetTimeoutEvent = transmitPacket
 }
 
 initialReceiverState = ARQReceiverState {
-  currentAckSeqNum = One,
-  ackTimeoutEvent = return ()
+  currentAckSeqNum = One
 }
 
 initialState = ARQSimState {
   currentSimulationTime = 0.0,
   transmitterState = initialTransmitterState,
   receiverState = initialReceiverState,
-  eventQueue = empty
+  eventQueue = PQ.singleton 0.0 transmitPacket
 }
 
 type Event = RWST ARQSimConfig ARQSimLog ARQSimState IO ()
@@ -86,6 +86,14 @@ transmitPacket = do
   tell onePacketTransmitted
   t <- gets currentSimulationTime
   liftIO . putStrLn $ "t = " ++ (show t) ++ " seconds: Packet transmitted"
+  fd <- asks forwardPropDelay
+  modify $ scheduleEvent (t+fd) receivePacket
+
+receivePacket :: Event
+receivePacket = do
+  t <- gets currentSimulationTime
+  liftIO . putStrLn $ "t = " ++ (show t) ++ " seconds: Packet received"
+  transmitACK
 
 ackTimeout :: Event
 ackTimeout = do
@@ -99,23 +107,44 @@ transmitACK = do
   tell oneACKTransmitted
   t <- gets currentSimulationTime
   liftIO . putStrLn $ "t = " ++ (show t) ++ " seconds: ACK transmitted"
+  rd <- asks reversePropDelay
+  modify $ scheduleEvent (t+rd) receiveACK
+
+receiveACK :: Event
+receiveACK = do
+  t <- gets currentSimulationTime
+  liftIO . putStrLn $ "t = " ++ (show t) ++ " seconds: ACK received"
+  transmitPacket
+
+scheduleEvent :: Time -> Event -> ARQSimState -> ARQSimState
+scheduleEvent t event st =
+  st { eventQueue = PQ.insert t event $ eventQueue st }
 
 arqSim :: Event
 arqSim = do
-  transmitPacket
-  transmitPacket
-  ackTimeout
-  transmitACK
+  q <- gets eventQueue      -- Get the current eventQueue
+  case PQ.null q of         -- Check if the eventQueue is empty
+    True -> return ()
+    False -> do
+      let ((t, event), q') = PQ.deleteFindMin q   -- Get the earliest event in the eventQueue
+      endt <- asks simDuration  -- Get the simulation duration
+      case (t > endt) of        -- Check if earliest event time exceeds simulation duration
+        True -> return ()
+        False -> do
+          modify (\st -> st { currentSimulationTime = t, eventQueue = q' })
+          event     -- Execute earliest event
+          arqSim    -- Recursive call to continue processing events
+
 
 main :: IO ()
 main = do
   let config = ARQSimConfig {
-    simDuration = 5.0,
-    packetErrorProbability = 0.5,
-    ackErrorProbability = 0.0,
-    timeoutDuration = 3.0,
-    forwardPropDelay = 1.0,
-    reversePropDelay = 1.0
+    simDuration             = 5.0,
+    packetErrorProbability  = 0.5,
+    ackErrorProbability     = 0.0,
+    timeoutDuration         = 3.0,
+    forwardPropDelay        = 1.0,
+    reversePropDelay        = 1.0
   }
 
   (s, log) <- execRWST arqSim config initialState
