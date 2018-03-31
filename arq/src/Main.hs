@@ -2,6 +2,7 @@ module Main where
 
 import Control.Monad.RWS
 import qualified Data.SortedList as SL
+import System.Random
 
 type Time = Double
 type Probability = Double
@@ -17,27 +18,35 @@ data ARQSimConfig = ARQSimConfig {
 
 data ARQSimLog = ARQSimLog {
   numPacketsTransmitted   :: Int,
+  numPacketErrors         :: Int,
   numACKTimeouts          :: Int,
-  numACKsTransmitted      :: Int
+  numACKsTransmitted      :: Int,
+  numACKErrors            :: Int
 } deriving (Show)
 
 instance Monoid ARQSimLog where
   mempty = logEmpty
   log1 `mappend` log2 = ARQSimLog {
       numPacketsTransmitted = numPacketsTransmitted log1 + numPacketsTransmitted  log2,
+      numPacketErrors       = numPacketErrors       log1 + numPacketErrors        log2,
       numACKTimeouts        = numACKTimeouts        log1 + numACKTimeouts         log2,
-      numACKsTransmitted    = numACKsTransmitted    log1 + numACKsTransmitted     log2
+      numACKsTransmitted    = numACKsTransmitted    log1 + numACKsTransmitted     log2,
+      numACKErrors          = numACKErrors          log1 + numACKErrors           log2
     }
 
 logEmpty = ARQSimLog {
   numPacketsTransmitted = 0,
+  numPacketErrors       = 0,
   numACKTimeouts        = 0,
-  numACKsTransmitted    = 0
+  numACKsTransmitted    = 0,
+  numACKErrors          = 0
 }
 
 onePacketTransmitted  = logEmpty { numPacketsTransmitted  = 1 }
-onePacketTimeout      = logEmpty { numACKTimeouts         = 1 }
+onePacketError        = logEmpty { numPacketErrors        = 1 }
+oneACKTimeout         = logEmpty { numACKTimeouts         = 1 }
 oneACKTransmitted     = logEmpty { numACKsTransmitted     = 1 }
+oneACKError           = logEmpty { numACKErrors           = 1 }
 
 data SeqNum = Zero | One
   deriving (Eq, Show)
@@ -117,25 +126,33 @@ transmitPacket = do
 
 receivePacket :: Event
 receivePacket = do
+  rv <- liftIO randomIO
+  errPr <- asks packetErrorProbability
   t <- gets currentSimulationTime
-  liftIO . putStrLn $ "t = " ++ (show t) ++ " seconds: Packet received"
-  psn <- gets currentPacketSeqNum
-  rxst <- gets receiverState
-  let epsn = expectedPacketSeqNum rxst
-  case psn == epsn of
+  case rv <= errPr of
     True -> do
-      liftIO . putStrLn $ "t = " ++ (show t) ++ " seconds: Sequence number in received packet = " 
-        ++ (show psn) ++ ". Expected packet sequence number = " ++ (show epsn) ++ "."
-      modify flipACKSeqNum
-      modify . setReceiverState $ rxst { expectedPacketSeqNum = snflip epsn }
-      transmitACK
-    False ->
-      liftIO . putStrLn $ "t = " ++ (show t) ++ " seconds: ERROR: Sequence number in received packet = " 
-        ++ (show psn) ++ ". Expected packet sequence number = " ++ (show epsn) ++ "."
+      tell onePacketError
+      liftIO . putStrLn $ "t = " ++ (show t) ++ " seconds: ERROR: Errors in received packet"
+      return ()
+    False -> do
+      liftIO . putStrLn $ "t = " ++ (show t) ++ " seconds: Packet received"
+      psn <- gets currentPacketSeqNum
+      rxst <- gets receiverState
+      let epsn = expectedPacketSeqNum rxst
+      case psn == epsn of
+        True -> do
+          liftIO . putStrLn $ "t = " ++ (show t) ++ " seconds: Sequence number in received packet = "
+            ++ (show psn) ++ ". Expected packet sequence number = " ++ (show epsn) ++ "."
+          modify flipACKSeqNum
+          modify . setReceiverState $ rxst { expectedPacketSeqNum = snflip epsn }
+          transmitACK
+        False ->
+          liftIO . putStrLn $ "t = " ++ (show t) ++ " seconds: ERROR: Sequence number in received packet = "
+            ++ (show psn) ++ ". Expected packet sequence number = " ++ (show epsn) ++ "."
 
 ackTimeout :: Event
 ackTimeout = do
-  tell onePacketTimeout
+  tell oneACKTimeout
   t <- gets currentSimulationTime
   liftIO . putStrLn $ "t = " ++ (show t) ++ " seconds: ACK timeout occurred"
   transmitPacket
@@ -150,25 +167,33 @@ transmitACK = do
 
 receiveACK :: Event
 receiveACK = do
+  rv <- liftIO randomIO
+  errPr <- asks ackErrorProbability
   t <- gets currentSimulationTime
-  liftIO . putStrLn $ "t = " ++ (show t) ++ " seconds: ACK received"
-  asn <- gets currentACKSeqNum
-  txst <- gets transmitterState 
-  let easn = expectedACKSeqNum txst
-  case easn == asn of
+  case rv <= errPr of
     True -> do
-      liftIO . putStrLn $ "t = " ++ (show t) ++ " seconds: Sequence number in received ACK = "
-        ++ (show asn) ++ ". Expected ACK sequence number = " ++ (show easn) ++ "."
-      modify flipPacketSeqNum
-      modify . setTransmitterState $ txst { expectedACKSeqNum = snflip easn }
-      case ackTimeoutEvent txst of
-        Nothing -> transmitPacket
-        Just timeoutEv -> do
-          modify $ cancelEvent timeoutEv
-          transmitPacket
+      tell oneACKError
+      liftIO . putStrLn $ "t = " ++ (show t) ++ " seconds: ERROR: Errors in received ACK"
+      return ()
     False -> do
-      liftIO . putStrLn $ "t = " ++ (show t) ++ " seconds: ERROR: Sequence number in received ACK = "
-        ++ (show asn) ++ ". Expected ACK sequence number = " ++ (show easn) ++ "."
+      liftIO . putStrLn $ "t = " ++ (show t) ++ " seconds: ACK received"
+      asn <- gets currentACKSeqNum
+      txst <- gets transmitterState
+      let easn = expectedACKSeqNum txst
+      case easn == asn of
+        True -> do
+          liftIO . putStrLn $ "t = " ++ (show t) ++ " seconds: Sequence number in received ACK = "
+            ++ (show asn) ++ ". Expected ACK sequence number = " ++ (show easn) ++ "."
+          modify flipPacketSeqNum
+          modify . setTransmitterState $ txst { expectedACKSeqNum = snflip easn }
+          case ackTimeoutEvent txst of
+            Nothing -> transmitPacket
+            Just timeoutEv -> do
+              modify $ cancelEvent timeoutEv
+              transmitPacket
+        False -> do
+          liftIO . putStrLn $ "t = " ++ (show t) ++ " seconds: ERROR: Sequence number in received ACK = "
+            ++ (show asn) ++ ". Expected ACK sequence number = " ++ (show easn) ++ "."
 
 scheduleEvent :: TimedEvent -> ARQSimState -> ARQSimState
 scheduleEvent te st = st { eventQueue = SL.insert te $ eventQueue st }
@@ -184,7 +209,7 @@ flipACKSeqNum st = st { currentACKSeqNum = snflip $ currentACKSeqNum st }
 
 arqSim :: Event
 arqSim = do
-  q <- gets eventQueue      -- Get the current eventQueue
+  q <- gets eventQueue        -- Get the current eventQueue
   case SL.uncons q of         -- Check if the eventQueue is empty
     Nothing -> return ()
     Just (TE t event, q') -> do
@@ -200,13 +225,15 @@ arqSim = do
 main :: IO ()
 main = do
   let config = ARQSimConfig {
-    simDuration             = 5.0,
-    packetErrorProbability  = 0.5,
-    ackErrorProbability     = 0.0,
+    simDuration             = 100.0,
+    packetErrorProbability  = 0.05,
+    ackErrorProbability     = 0.01,
     timeoutDuration         = 3.0,
     forwardPropDelay        = 1.0,
     reversePropDelay        = 1.0
   }
 
+  let randSeed = 124             -- Random seed
+  setStdGen $ mkStdGen randSeed  -- Set the global random number generator
   (s, log) <- execRWST arqSim config initialState
   putStrLn $ show log
