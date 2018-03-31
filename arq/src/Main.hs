@@ -171,12 +171,10 @@ receiveACK = do
         ++ (show asn) ++ ". Expected ACK sequence number = " ++ (show easn) ++ "."
 
 scheduleEvent :: TimedEvent -> ARQSimState -> ARQSimState
-scheduleEvent te st =
-  st { eventQueue = SL.insert te $ eventQueue st }
+scheduleEvent te st = st { eventQueue = SL.insert te $ eventQueue st }
 
 cancelEvent :: TimedEvent -> ARQSimState -> ARQSimState
-cancelEvent te st =
-  st { eventQueue = SL.delete te $ eventQueue st }
+cancelEvent te st = st { eventQueue = SL.delete te $ eventQueue st }
 
 flipPacketSeqNum :: ARQSimState -> ARQSimState
 flipPacketSeqNum st = st { currentPacketSeqNum = snflip $ currentPacketSeqNum st }
