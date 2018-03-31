@@ -25,23 +25,23 @@ data ARQSimLog = ARQSimLog {
 instance Monoid ARQSimLog where
   mempty = logEmpty
   log1 `mappend` log2 = ARQSimLog {
-      numPacketsTransmitted = numPacketsTransmitted log1 + numPacketsTransmitted log2,
-      numACKTimeouts = numACKTimeouts log1 + numACKTimeouts log2,
-      numACKsTransmitted = numACKsTransmitted log1 + numACKsTransmitted log2,
-      numDupPacketsReceived = numDupPacketsReceived log1 + numDupPacketsReceived log2
+      numPacketsTransmitted = numPacketsTransmitted log1 + numPacketsTransmitted  log2,
+      numACKTimeouts        = numACKTimeouts        log1 + numACKTimeouts         log2,
+      numACKsTransmitted    = numACKsTransmitted    log1 + numACKsTransmitted     log2,
+      numDupPacketsReceived = numDupPacketsReceived log1 + numDupPacketsReceived  log2
     }
 
 logEmpty = ARQSimLog {
   numPacketsTransmitted = 0,
-  numACKTimeouts = 0,
-  numACKsTransmitted = 0,
+  numACKTimeouts        = 0,
+  numACKsTransmitted    = 0,
   numDupPacketsReceived = 0
 }
 
-onePacketTransmitted = logEmpty { numPacketsTransmitted = 1 }
-onePacketTimeout = logEmpty { numACKTimeouts = 1 }
-oneACKTransmitted = logEmpty { numACKsTransmitted = 1 }
-oneDupPacketReceived = logEmpty { numDupPacketsReceived = 1 }
+onePacketTransmitted  = logEmpty { numPacketsTransmitted  = 1 }
+onePacketTimeout      = logEmpty { numACKTimeouts         = 1 }
+oneACKTransmitted     = logEmpty { numACKsTransmitted     = 1 }
+oneDupPacketReceived  = logEmpty { numDupPacketsReceived  = 1 }
 
 data SeqNum = Zero | One
 
@@ -65,7 +65,7 @@ data ARQSimState = ARQSimState {
 
 initialTransmitterState = ARQTransmitterState {
   currentPacketSeqNum = Zero,
-  packetTimeoutEvent = transmitPacket
+  packetTimeoutEvent     = transmitPacket
 }
 
 initialReceiverState = ARQReceiverState {
@@ -74,9 +74,9 @@ initialReceiverState = ARQReceiverState {
 
 initialState = ARQSimState {
   currentSimulationTime = 0.0,
-  transmitterState = initialTransmitterState,
-  receiverState = initialReceiverState,
-  eventQueue = PQ.singleton 0.0 transmitPacket
+  transmitterState      = initialTransmitterState,
+  receiverState         = initialReceiverState,
+  eventQueue            = PQ.singleton 0.0 transmitPacket
 }
 
 type Event = RWST ARQSimConfig ARQSimLog ARQSimState IO ()
