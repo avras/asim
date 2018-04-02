@@ -51,7 +51,7 @@ type EventQueue = SL.SortedList TimedEvent
 
 data AlohaSimState = AlohaSimState {
   currentSimulationTime   :: Time,
-  numFrameTransmissions   :: Int,
+  frameBeginTimes         :: [Time],
   eventQueue              :: EventQueue,
   randomNumberGenerator   :: MWC.GenIO
 }
@@ -61,7 +61,7 @@ scheduleNextFrameArrival = do
   gen <- gets randomNumberGenerator
   load <- asks meanAttemptsPerFrame
   tf <- asks frameDuration
-  dt <- liftIO $ exponential (load*tf) gen
+  dt <- liftIO $ exponential (load/tf) gen
   t <- gets currentSimulationTime
   modify . scheduleEvent $ TE (t+dt) beginFrameTransmission
 
@@ -70,13 +70,7 @@ beginFrameTransmission = do
   tell oneFrameTransmitted
   t <- gets currentSimulationTime
   liftIO . putStrLn $ "t = " ++ (show t) ++ " seconds: Frame transmission begins"
-  numft <- gets numFrameTransmissions
-  case numft == 0 of
-    True -> return ()
-    False -> do
-      tell oneCollision
-      liftIO . putStrLn $ "t = " ++ (show t) ++ " seconds: Frame collision occurred"
-  modify incrFrameTransmissions
+  modify $ addFrameBeginTime t
   tf <- asks frameDuration
   modify . scheduleEvent $ TE (t+tf) endFrameTransmission
   scheduleNextFrameArrival
@@ -85,17 +79,32 @@ endFrameTransmission :: Event
 endFrameTransmission = do
   t <- gets currentSimulationTime
   liftIO . putStrLn $ "t = " ++ (show t) ++ " seconds: Frame transmission ends"
-  modify decrFrameTransmissions
-  
-
-incrFrameTransmissions :: AlohaSimState -> AlohaSimState
-incrFrameTransmissions st = st { numFrameTransmissions = (+) 1 $ numFrameTransmissions st }
-
-decrFrameTransmissions :: AlohaSimState -> AlohaSimState
-decrFrameTransmissions st = st { numFrameTransmissions = (+) (-1) $ numFrameTransmissions st }
+  fbts <- gets frameBeginTimes
+  tf <- asks frameDuration
+  case (isCollisionAtFrameEndTime fbts tf t) of
+    True -> do
+      tell oneCollision
+      liftIO . putStrLn $ "t = " ++ (show t) ++ " seconds: Frame collision occurred"
+    False -> do
+      tell oneFrameReceived
+      liftIO . putStrLn $ "t = " ++ (show t) ++ " seconds: Frame received successfully"
+  modify $ filterFrameBeginTimes t tf
 
 scheduleEvent :: TimedEvent -> AlohaSimState -> AlohaSimState
 scheduleEvent te st = st { eventQueue = SL.insert te $ eventQueue st }
+
+addFrameBeginTime :: Time -> AlohaSimState -> AlohaSimState
+addFrameBeginTime t st = st { frameBeginTimes = [t] ++ (frameBeginTimes st) }
+
+filterFrameBeginTimes :: Time -> Time -> AlohaSimState -> AlohaSimState
+filterFrameBeginTimes t tf st = st { frameBeginTimes = fbt } where
+  f = \t1 -> t1 > t-2*tf
+  fbt = filter f $ frameBeginTimes st
+
+isCollisionAtFrameEndTime :: [Time] -> Time -> Time -> Bool
+isCollisionAtFrameEndTime fbts tf fet = any collision fbts where
+  collision = \fbt -> (fbt >= fet-2*tf) && (fbt <= fet) && (fbt /= fet-tf)
+-- We assume two packets will never arrive at the same time in specifying the last condition
 
 alohaSim :: Event
 alohaSim = do
@@ -117,15 +126,19 @@ main = do
   gen <- MWC.create
   let initialState = AlohaSimState {
         currentSimulationTime   = 0.0,
-        numFrameTransmissions   = 0,
+        frameBeginTimes         = [],
         eventQueue              = SL.singleton $ TE 0.0 scheduleNextFrameArrival,
         randomNumberGenerator   = gen
       }
       config = AlohaSimConfig {
-        simDuration             = 20.0,
+        simDuration             = 1000.0,
         frameDuration           = 1.0,
         meanAttemptsPerFrame    = 0.5
       }
 
-  (s, log) <- execRWST alohaSim config initialState
-  putStrLn $ show log
+  (s, results) <- execRWST alohaSim config initialState
+  putStrLn $ show results
+  let g = meanAttemptsPerFrame config
+  putStrLn $"\nTheoretical throughput for load G = " ++ (show g) ++ " is Ge^{-2G} = " ++ (show $ g*(exp (-2*g)))
+  let maxFramesPossible = (/) <$> simDuration <*> frameDuration $ config
+  putStrLn $ "Simulated throughput = " ++ (show $ (fromIntegral $ numFramesReceived results)/maxFramesPossible)
