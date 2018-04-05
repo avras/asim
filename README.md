@@ -6,3 +6,4 @@ Some experiments in building a network simulator using Haskell
 
   - Stop-and-Wait ARQ
   - ALOHA
+  - Slotted ALOHA
